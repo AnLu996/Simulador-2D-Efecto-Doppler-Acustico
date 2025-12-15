@@ -132,13 +132,12 @@ while running:
     dt = clock.tick(60) / 1000.0
 
     # --------------------------------------
-    # EVENTOS (SIEMPRE, AUN EN PAUSA)
+    # EVENTOS
     # --------------------------------------
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
 
-        # --- TECLAS ---
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_p:
                 paused = not paused
@@ -147,7 +146,6 @@ while running:
             if event.key == pygame.K_o:
                 auto_observer = not auto_observer
 
-        # --- CLICK MOUSE ---
         if event.type == pygame.MOUSEBUTTONDOWN:
             mx, my = pygame.mouse.get_pos()
             if pause_button.collidepoint(mx, my):
@@ -162,17 +160,14 @@ while running:
             dragging_observer = False
 
     # --------------------------------------
-    # PAUSA: SOLO DETIENE FÍSICA Y AUDIO
+    # PAUSA
     # --------------------------------------
     if paused:
-        # Pausar audio
         if channel.get_busy():
             channel.pause()
 
-        # Dibujar escena congelada
         window.blit(background, (0, 0))
 
-        # Ondas tal como están
         for pos0, t0 in rings:
             age = time_elapsed - t0
             center = pos0 - vel_s * age
@@ -184,18 +179,16 @@ while running:
         window.blit(ambulance_img, (source_pos[0] - 50, source_pos[1] - 25))
         window.blit(observer_img, (observer_pos[0] - 30, observer_pos[1] - 30))
 
-        # Línea entre fuente y observador
         pygame.draw.line(window, (255, 255, 255),
                          source_pos.astype(int),
                          observer_pos.astype(int), 3)
 
-        # Botón REANUDAR
         mx, my = pygame.mouse.get_pos()
         hover = pause_button.collidepoint(mx, my)
         draw_button(window, pause_button, "REANUDAR", hover, active=True)
 
         pygame.display.flip()
-        continue 
+        continue
 
     if not channel.get_busy():
         channel.play(sirena, loops=-1)
@@ -206,7 +199,7 @@ while running:
             pass
 
     # --------------------------------------
-    # TIEMPO (solo si NO está en pausa)
+    # AVANZAR TIEMPO
     # --------------------------------------
     time_elapsed += dt
 
@@ -218,10 +211,13 @@ while running:
 
     if dragging_source:
         source_pos = np.array(pygame.mouse.get_pos(), float)
+        # suavizar arrastre
+        source_pos = prev_source + (source_pos - prev_source) * 0.2
+
     if dragging_observer:
         observer_pos = np.array(pygame.mouse.get_pos(), float)
+        observer_pos = prev_observer + (observer_pos - prev_observer) * 0.2
 
-    # MOVIMIENTO AUTOMÁTICO
     if auto_source:
         source_pos += np.array([100 * dt, 0])
 
@@ -230,6 +226,20 @@ while running:
 
     vel_s = (source_pos - prev_source) / max(dt, 1e-6)
     vel_o = (observer_pos - prev_observer) / max(dt, 1e-6)
+
+    # ===============================
+    # LIMITAR VELOCIDADES A SUBSÓNICAS
+    # ===============================
+    max_speed = 50.0  # m/s (~180 km/h)
+
+    speed_s = np.linalg.norm(vel_s)
+    speed_o = np.linalg.norm(vel_o)
+
+    if speed_s > max_speed:
+        vel_s = vel_s * (max_speed / speed_s)
+
+    if speed_o > max_speed:
+        vel_o = vel_o * (max_speed / speed_o)
 
     # --------------------------------------
     # CÁLCULO DOPPLER
@@ -251,13 +261,15 @@ while running:
 
     # COLOR SEGÚN DOPPLER
     if abs(f_obs - f_emit) < 1.0:
-        wave_color = (120, 120, 255)  # sin cambio apreciable
+        wave_color = (120,120,255)
     elif f_obs > f_emit:
-        wave_color = (0, 255, 0)      # se acerca ➜ verde
+        wave_color = (0,255,0)
     else:
-        wave_color = (255, 0, 0)      # se aleja ➜ rojo
+        wave_color = (255,0,0)ñ
 
-    # VOLUMEN ~ 1/d² (con mínimo para no "cortar" del todo)
+    # --------------------------------------
+    # VOLUMEN
+    # --------------------------------------
     base_vol = 3000.0 / (d**2 + 1)
     volume = max(0.05, min(1.0, base_vol))
     channel.set_volume(volume)
@@ -281,43 +293,40 @@ while running:
         if radius < max(WIDTH, HEIGHT):
             pygame.draw.circle(window, wave_color,
                                center.astype(int), int(radius), 2)
-            # FLASH CUANDO LLEGA AL OBSERVADOR
             if np.linalg.norm(center - observer_pos) < radius + 3:
                 flash_time = time_elapsed
 
-    window.blit(ambulance_img, (source_pos[0] - 50, source_pos[1] - 25))
+    window.blit(ambulance_img, (source_pos[0]-50, source_pos[1]-25))
 
-    # BRILLO SI RECIBE ONDA
     if (time_elapsed - flash_time) < flash_duration:
         flash_img = observer_img.copy()
-        flash_img.fill((255, 255, 255), None, pygame.BLEND_ADD)
-        window.blit(flash_img, (observer_pos[0] - 30, observer_pos[1] - 30))
+        flash_img.fill((255,255,255), None, pygame.BLEND_ADD)
+        window.blit(flash_img, (observer_pos[0]-30, observer_pos[1]-30))
     else:
-        window.blit(observer_img, (observer_pos[0] - 30, observer_pos[1] - 30))
+        window.blit(observer_img, (observer_pos[0]-30, observer_pos[1]-30))
 
-    pygame.draw.line(window, (255, 255, 255),
+    pygame.draw.line(window, (255,255,255),
                      source_pos.astype(int),
                      observer_pos.astype(int), 3)
 
-    # BOTÓN PAUSAR
     mx, my = pygame.mouse.get_pos()
     hover = pause_button.collidepoint(mx, my)
     draw_button(window, pause_button, "PAUSAR", hover, paused)
 
-    # ==================================================
-    # SECCIÓN 2: VARIABLES FÍSICAS
-    # ==================================================
+    # =============================================
+    # SECCIÓN VARIABLES FÍSICAS
+    # =============================================
     vars_rect = pygame.Rect(0, HEIGHT - 260, WIDTH // 2, 260)
-    pygame.draw.rect(window, (15, 15, 15), vars_rect)
-    pygame.draw.rect(window, (250, 250, 250), vars_rect, 2)
+    pygame.draw.rect(window, (15,15,15), vars_rect)
+    pygame.draw.rect(window, (250,250,250), vars_rect, 2)
 
-    window.blit(font.render("VARIABLES FÍSICAS", True, (255, 255, 0)),
+    window.blit(font.render("VARIABLES FÍSICAS", True, (255,255,0)),
                 (10, HEIGHT - 245))
 
     line_y = HEIGHT - 220
 
     def draw_line(label, val):
-        txt = font.render(f"{label}: {val}", True, (230, 230, 230))
+        txt = font.render(f"{label}: {val}", True, (230,230,230))
         window.blit(txt, (20, draw_line.y))
         draw_line.y += 22
 
@@ -334,46 +343,46 @@ while running:
     draw_line("vs_rad", f"{vs_rad:.2f} m/s")
     draw_line("vo_rad", f"{vo_rad:.2f} m/s")
 
-    # ==================================================
-    # SECCIÓN 3: FÓRMULA DOPPLER
-    # ==================================================
+    # =============================================
+    # FORMULA DOPPLER
+    # =============================================
     form_rect = pygame.Rect(WIDTH // 2, HEIGHT - 260, WIDTH // 2, 260)
-    pygame.draw.rect(window, (15, 15, 15), form_rect)
-    pygame.draw.rect(window, (250, 250, 250), form_rect, 2)
+    pygame.draw.rect(window, (15,15,15), form_rect)
+    pygame.draw.rect(window, (250,250,250), form_rect, 2)
 
-    title = font.render("FÓRMULA DOPPLER GENERAL", True, (255, 255, 0))
+    title = font.render("FÓRMULA DOPPLER GENERAL", True, (255,255,0))
     window.blit(title, (WIDTH // 2 + 10, HEIGHT - 235))
 
     num = f"{v_sound:.1f} + ({vo_rad:.2f})"
     den = f"{v_sound:.1f} - ({vs_rad:.2f})"
 
-    num_txt = font.render(num, True, (255, 255, 255))
-    den_txt = font.render(den, True, (255, 255, 255))
-    emit_txt = font.render(f"{f_emit:.2f}", True, (255, 255, 255))
+    num_txt = font.render(num, True, (255,255,255))
+    den_txt = font.render(den, True, (255,255,255))
+    emit_txt = font.render(f"{f_emit:.2f}", True, (255,255,255))
 
     cx = WIDTH // 2 + 150
     cy = HEIGHT - 170
 
-    window.blit(num_txt, (cx - num_txt.get_width() // 2, cy - 20))
-    pygame.draw.line(window, (255, 255, 255), (cx - 80, cy), (cx + 80, cy), 2)
-    window.blit(den_txt, (cx - den_txt.get_width() // 2, cy + 5))
+    window.blit(num_txt, (cx - num_txt.get_width()//2, cy - 20))
+    pygame.draw.line(window, (255,255,255), (cx - 80, cy), (cx + 80, cy), 2)
+    window.blit(den_txt, (cx - den_txt.get_width()//2, cy + 5))
 
-    times_txt = font.render("×", True, (255, 255, 255))
+    times_txt = font.render("×", True, (255,255,255))
     window.blit(times_txt, (cx + 100, cy - 5))
     window.blit(emit_txt, (cx + 130, cy - 5))
 
-    res_txt = font.render(f"f'(t) = {f_obs:.2f} Hz", True, (0, 255, 0))
+    res_txt = font.render(f"f'(t) = {f_obs:.2f} Hz", True, (0,255,0))
     window.blit(res_txt, (WIDTH // 2 + 10, HEIGHT - 85))
 
     theta = np.degrees(np.arctan2(r_hat[1], r_hat[0])) if d > 0 else 0
-    window.blit(font.render(f"θ(t) = {theta:.1f}°", True, (255, 255, 0)),
+    window.blit(font.render(f"θ(t) = {theta:.1f}°", True, (255,255,0)),
                 (WIDTH // 2 + 10, HEIGHT - 60))
 
     pygame.display.flip()
 
-    # --------------------------------------
+    # =============================================
     # GRÁFICAS
-    # --------------------------------------
+    # =============================================
     history_t.append(time_elapsed)
     history_d.append(d)
     history_f.append(f_obs)
